@@ -357,7 +357,12 @@ class CharConverter : public ArgVisitor<CharConverter, void> {
 };
 }  // namespace
 
+FMT_FUNC FormatError::~FormatError() {}
+FMT_FUNC SystemError::~SystemError() {}
+
 namespace internal {
+
+FMT_FUNC RuntimeError::~RuntimeError() {}
 
 // This method is used to preserve binary compatibility with fmt 3.0.
 // It can be removed in 4.0.

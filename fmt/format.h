@@ -105,7 +105,7 @@ typedef __int64          intmax_t;
 
 #if defined(__clang__) && !defined(FMT_ICC_VERSION)
 # pragma clang diagnostic push
-# pragma clang diagnostic ignored "-Wdocumentation"
+# pragma clang diagnostic ignored "-Wdocumentation-unknown-command"
 #endif
 
 #ifdef __GNUC_LIBSTD__
@@ -179,15 +179,19 @@ typedef __int64          intmax_t;
 # define FMT_USE_NOEXCEPT 0
 #endif
 
-#ifndef FMT_NOEXCEPT
-# if FMT_EXCEPTIONS
-#  if FMT_USE_NOEXCEPT || FMT_HAS_FEATURE(cxx_noexcept) || \
+// FMT_STD_NOEXCEPT is used on dtors overriding the one of std::exception
+// to prevent looser throw specifier error.
+#if FMT_USE_NOEXCEPT || FMT_HAS_FEATURE(cxx_noexcept) || \
     (FMT_GCC_VERSION >= 408 && FMT_HAS_GXX_CXX11) || \
     FMT_MSC_VER >= 1900
-#   define FMT_NOEXCEPT noexcept
-#  else
-#   define FMT_NOEXCEPT throw()
-#  endif
+# define FMT_STD_NOEXCEPT noexcept
+#else
+# define FMT_STD_NOEXCEPT throw()
+#endif
+
+#ifndef FMT_NOEXCEPT
+# if FMT_EXCEPTIONS
+#  define FMT_NOEXCEPT FMT_STD_NOEXCEPT
 # else
 #  define FMT_NOEXCEPT
 # endif
@@ -538,6 +542,7 @@ class FormatError : public std::runtime_error {
  public:
   explicit FormatError(CStringRef message)
   : std::runtime_error(message.c_str()) {}
+  ~FormatError() FMT_STD_NOEXCEPT;
 };
 
 namespace internal {
@@ -1316,6 +1321,7 @@ struct NamedArg : Arg {
 class RuntimeError : public std::runtime_error {
  protected:
   RuntimeError() : std::runtime_error("") {}
+  ~RuntimeError() FMT_STD_NOEXCEPT;
 };
 
 template <typename Char>
@@ -2278,6 +2284,7 @@ class SystemError : public internal::RuntimeError {
     init(error_code, message, ArgList());
   }
   FMT_VARIADIC_CTOR(SystemError, init, int, CStringRef)
+  ~SystemError() FMT_STD_NOEXCEPT;
 
   int error_code() const { return error_code_; }
 };
