@@ -1036,19 +1036,17 @@ struct Arg : Value {
   Type type;
 };
 
-struct ArgSpecBase {};
+// This is a placeholder for a formatting argument.
+class ArgId {
+  std::size_t index_;
 
-template <typename Char>
-struct ArgSpec : ArgSpecBase {
-  unsigned index;
-  const Char *name;
+public:
+  ArgId() : index_() {}
+  ArgId(std::size_t index, bool indirect)
+      : index_((index << 1u) | (indirect ? 1u : 0)) {}
 
-  ArgSpec() : index(), name() {}
-  ArgSpec(unsigned index) : index(index << 1u), name() {}
-  ArgSpec(const Char *name, std::size_t size)
-      : index((unsigned(size) << 1u) | 1u), name(name) {}
-
-  bool is_name() const { return index & 1u; }
+  bool indirect() const { return index_ & 1u; }
+  std::size_t index() const { return index_ >> 1u; }
 };
 
 template <typename Char>
@@ -3599,26 +3597,29 @@ inline bool on_custom_arg(const Char *&s, const Arg &arg, void *f) {
   return false;
 }
 
-// ArgSpec
+// ArgId
 //--------
-inline void require_numeric_argument(const ArgSpecBase &, char) {}
+inline void require_numeric_argument(const ArgId &, char) {}
 
-inline void check_sign(const void *, const ArgSpecBase &) {}
+inline void check_sign(const void *, const ArgId &) {}
 
-inline void check_precision_target(const ArgSpecBase &) {}
+inline void check_precision_target(const ArgId &) {}
 
-inline void set_width(FormatSpec &spec, const ArgSpecBase &) {
+inline void set_width(FormatSpec &spec, const ArgId &) {
   spec.flags_ |= DYN_WIDTH_FLAG;
 }
 
-inline void set_precision(FormatSpec &spec, const ArgSpecBase &) {
+inline void set_precision(FormatSpec &spec, const ArgId &) {
   spec.flags_ |= DYN_PRECISION_FLAG;
 }
 
-inline bool on_custom_arg(const void *s, const ArgSpecBase &arg, void *) {}
+inline bool on_custom_arg(const void *s, const ArgId &arg, void *) {
+  return false;
+}
 
 template <typename Char, typename Arg, typename F>
-bool parse_arg_spec(const Char *&s, const Arg &arg, FormatSpec& spec, Arg& width_arg, Arg& precision_arg, F* f) {
+bool parse_arg_spec(const Char *&s, const Arg &arg, FormatSpec &spec,
+                    Arg &width_arg, Arg &precision_arg, F *f) {
   if (*s == ':') {
     if (on_custom_arg(s, arg, f))
       return false;
@@ -3807,123 +3808,145 @@ void BasicFormatter<Char, AF>::format(BasicCStringRef<Char> format_str) {
 }
 
 template <typename Char>
-struct BasicFormatObject
-{
-    using Arg = internal::ArgSpec<Char>;
+struct BasicFormat {
+  typedef internal::ArgId Arg;
 
-    struct Initializer
-    {
-        unsigned _i;
-        std::vector<Char>& _text;
-        std::vector<std::size_t>& _delim;
-        std::vector<FormatSpec>& _specs;
-        std::vector<Arg>& _args;
+  struct Initializer {
+    std::vector<Char> &_text;
+    std::vector<std::size_t> &_delims;
+    std::vector<FormatSpec> &_specs;
+    std::vector<Arg> &_args;
+    unsigned _i;
+    bool _has_names;
+    bool _merge_delim;
 
-        void init(BasicCStringRef<Char> format_str)
-        {
-            const Char *s = format_str.c_str();
-            const Char *start = s;
-            while (*s) {
-                Char c = *s++;
-                if (c != '{' && c != '}') continue;
-                if (*s == c) {
-                    on_text(start, s);
-                    start = ++s;
-                    continue;
-                }
-                if (c == '}')
-                    FMT_THROW(FormatError("unmatched '}' in format string"));
-                on_text(start, s - 1);
-                Arg arg = internal::is_name_start(*s) ?
-                    parse_arg_name(s) : parse_arg_index(s);
-                start = s = on_arg(s, arg);
-            }
+    void init(BasicCStringRef<Char> format_str) {
+      const Char *s = format_str.c_str();
+      const Char *start = s;
+      while (*s) {
+        Char c = *s++;
+        if (c != '{' && c != '}')
+          continue;
+        if (*s == c) {
+          on_text(start, s);
+          _merge_delim = true;
+          start = ++s;
+          continue;
         }
+        if (c == '}')
+          FMT_THROW(FormatError("unmatched '}' in format string"));
+        on_text(start, s - 1);
+        Arg arg = internal::is_name_start(*s) ? parse_arg_name(s)
+                                              : parse_arg_index(s);
+        start = s = on_arg(s, arg);
+        _merge_delim = false;
+      }
+    }
 
-        Arg parse_arg_index(const Char *&s) {
-            if (*s < '0' || *s > '9')
-                return Arg(_i++);
-            unsigned i = internal::parse_nonnegative_int(s);
-            _i = i + 1;
-            return Arg(i);
-        }
+    Arg parse_arg_index(const Char *&s) {
+      if (*s < '0' || *s > '9')
+        return Arg(_i++, false);
+      unsigned i = internal::parse_nonnegative_int(s);
+      _i = i + 1;
+      return Arg(i, false);
+    }
 
-        Arg parse_arg_name(const Char *&s) {
-            assert(internal::is_name_start(*s));
-            const Char *start = s;
-            Char c;
-            do {
-                c = *++s;
-            } while (internal::is_name_start(c) || ('0' <= c && c <= '9'));
-            return Arg(start, s - start);
-        }
+    Arg parse_arg_name(const Char *&s) {
+      assert(internal::is_name_start(*s));
+      const Char *start = s;
+      Char c;
+      do {
+        c = *++s;
+      } while (internal::is_name_start(c) || ('0' <= c && c <= '9'));
+      _text.insert(_text.end(), start, s);
+      _has_names = true;
+      return Arg(_text.size(), true);
+    }
 
-        void on_text(const Char *start, const Char *end)
-        {
-            _text.insert(_text.end(), start, end);
-            _delim.push_back(_text.size());
-        }
+    void on_text(const Char *start, const Char *end) {
+      _text.insert(_text.end(), start, end);
+      if (_merge_delim)
+        _delims.back() = _text.size();
+      else
+        _delims.push_back(_text.size());
+    }
 
-        const Char * on_arg(const Char *format_str, const Arg &arg)
-        {
-            FormatSpec spec;
-            Arg width_arg, precision_arg;
-            internal::parse_arg_spec(format_str, arg, spec, width_arg, precision_arg, this);
-            _specs.push_back(spec);
-            if (spec.flags_ & DYN_WIDTH_FLAG)
-                _args.push_back(width_arg);
-            if (spec.flags_ & DYN_PRECISION_FLAG)
-                _args.push_back(precision_arg);
-            _args.push_back(arg);
-            // Make sure text always appears first.
-            if (_text.empty())
-                on_text(nullptr, nullptr);
-            return format_str;
-        }
+    const Char *on_arg(const Char *format_str, const Arg &arg) {
+      FormatSpec spec;
+      Arg width_arg, precision_arg;
+      internal::parse_arg_spec(format_str, arg, spec, width_arg, precision_arg,
+                               this);
+      _specs.push_back(spec);
+      if (spec.flags_ & DYN_WIDTH_FLAG)
+        _args.push_back(width_arg);
+      if (spec.flags_ & DYN_PRECISION_FLAG)
+        _args.push_back(precision_arg);
+      _args.push_back(arg);
+      return format_str;
+    }
+  };
+
+  explicit BasicFormat(BasicCStringRef<Char> format_str) {
+    Initializer init = {_text, _delims, _specs, _args};
+    init.init(format_str);
+    _has_names = init._has_names;
+  }
+
+  template <class Visitor>
+  void apply(Visitor &visit, const ArgList &args) const {
+    auto tb = _text.data();
+    auto ti = tb;
+    auto di = _delims.begin();
+    auto de = _delims.end();
+    auto si = _specs.begin();
+    auto se = _specs.end();
+    auto ai = _args.begin();
+
+    internal::ArgMap<Char> map;
+    if (_has_names)
+      map.init(args);
+
+    auto lookup = [&](const Arg &arg) {
+      std::size_t i = arg.index();
+      if (arg.indirect()) {
+        auto t0 = ti;
+        ti = tb + i;
+        if (const internal::Arg *arg =
+                map.find(BasicStringRef<Char>(t0, ti - t0)))
+          return *arg;
+        FMT_THROW(FormatError("argument not found"));
+      }
+      return args[unsigned(i)];
     };
 
-    explicit BasicFormatObject(BasicCStringRef<Char> format_str)
-    {
-        Initializer init = {0, _text, _delim, _specs, _args};
-        init.init(format_str);
+    bool stop = false;
+    for (;;) {
+      if (di != de) {
+        auto t0 = ti;
+        ti = tb + *di;
+        visit(t0, ti);
+        ++di;
+      } else if (!(stop ^= true))
+        return;
+      if (si != se) {
+        FormatSpec spec(*si);
+        internal::Arg arg(lookup(*ai++));
+        if (spec.flags_ & DYN_WIDTH_FLAG)
+          internal::set_width(spec, lookup(*ai++));
+        if (spec.flags_ & DYN_PRECISION_FLAG)
+          internal::set_precision(spec, lookup(*ai++));
+        visit(spec, arg);
+        ++si;
+      } else if (!(stop ^= true))
+        return;
     }
+  }
 
-
-
-    template<class Writer, class Visitor>
-    void apply(Writer& w, Visitor& v, const ArgList& args)
-    {
-        internal::ArgMap<Char> map;
-        map.init(args);
-        map.
-        auto tb = _text.data();
-        auto ti = tb;
-        auto te = ti + _text.size();
-        auto di = _delim.begin();
-        auto si = _specs.begin();
-        auto se = _specs.end();
-        auto ai = _args.begin();
-        auto ae = _args.end();
-        for (;;)
-        {
-            if (ti != te)
-            {
-                w.write(ti, tb + di);
-                ti = tb + di;
-            }
-            if (si != se)
-            {
-                if (si->flags_ & DYN_WIDTH_FLAG)
-                    internal::set_width(*si, args[ai->])
-                v.visit();
-            }
-        }
-    }
-
-    std::vector<Char> _text;
-    std::vector<std::size_t> _delim;
-    std::vector<FormatSpec> _specs;
-    std::vector<Arg> _args;
+  std::vector<Char> _text;
+  std::vector<std::size_t> _delims;
+  std::vector<FormatSpec> _specs;
+  std::vector<Arg> _args;
+  bool _has_names;
 };
 }  // namespace fmt
 
