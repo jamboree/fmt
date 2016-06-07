@@ -24,7 +24,7 @@
  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-
+#include <iostream>
 #include "fmt/format.h"
 
 #include <string.h>
@@ -358,6 +358,61 @@ class CharConverter : public ArgVisitor<CharConverter, void> {
 }  // namespace
 
 namespace internal {
+
+FMT_FUNC void set_width(FormatSpec &spec, const Arg &width_arg) {
+  ULongLong value = 0;
+  switch (width_arg.type) {
+  case Arg::INT:
+    if (width_arg.int_value < 0)
+      FMT_THROW(FormatError("negative width"));
+    value = width_arg.int_value;
+    break;
+  case Arg::UINT:
+    value = width_arg.uint_value;
+    break;
+  case Arg::LONG_LONG:
+    if (width_arg.long_long_value < 0)
+      FMT_THROW(FormatError("negative width"));
+    value = width_arg.long_long_value;
+    break;
+  case Arg::ULONG_LONG:
+    value = width_arg.ulong_long_value;
+    break;
+  default:
+    FMT_THROW(FormatError("width is not integer"));
+  }
+  if (value > (std::numeric_limits<int>::max)())
+    FMT_THROW(FormatError("number is too big"));
+  spec.width_ = static_cast<int>(value);
+}
+
+FMT_FUNC void set_precision(FormatSpec &spec, const Arg &precision_arg) {
+  ULongLong value = 0;
+  switch (precision_arg.type) {
+  case Arg::INT:
+    if (precision_arg.int_value < 0)
+      FMT_THROW(FormatError("negative precision"));
+    value = precision_arg.int_value;
+    break;
+  case Arg::UINT:
+    value = precision_arg.uint_value;
+    break;
+  case Arg::LONG_LONG:
+    if (precision_arg.long_long_value < 0)
+      FMT_THROW(FormatError("negative precision"));
+    value = precision_arg.long_long_value;
+    break;
+  case Arg::ULONG_LONG:
+    value = precision_arg.ulong_long_value;
+    break;
+  default:
+    FMT_THROW(FormatError("precision is not integer"));
+  }
+  if (value > (std::numeric_limits<int>::max)())
+    FMT_THROW(FormatError("number is too big"));
+  spec.precision_ = static_cast<int>(value);
+}
+
 
 // This method is used to preserve binary compatibility with fmt 3.0.
 // It can be removed in 4.0.
