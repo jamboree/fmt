@@ -87,18 +87,16 @@ struct ConvertToIntImpl<T, true> {
 }  // namespace internal
 
 // Formats a value.
-template <typename Char, typename ArgFormatter, typename T>
-void format(BasicFormatter<Char, ArgFormatter> &f,
-            const Char *&format_str, const T &value) {
+template <typename Char, typename T>
+void do_format(BasicWriter<Char> &w,
+            const FormatSpec &spec, const T &value) {
   internal::MemoryBuffer<Char, internal::INLINE_BUFFER_SIZE> buffer;
 
   internal::FormatBuf<Char> format_buf(buffer);
   std::basic_ostream<Char> output(&format_buf);
   output << value;
 
-  BasicStringRef<Char> str(&buffer[0], format_buf.size());
-  typedef internal::MakeArg< BasicFormatter<Char> > MakeArg;
-  format_str = f.format(format_str, MakeArg(str));
+  w.write_str(&buffer[0], format_buf.size(), spec);
 }
 
 /**

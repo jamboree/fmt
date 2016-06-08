@@ -998,7 +998,7 @@ struct Value {
   };
 
   typedef void (*FormatFunc)(
-      void *formatter, const void *arg, void *format_str_ptr);
+      void *writer, const void *spec, const void *arg);
 
   struct CustomValue {
     const void *value;
@@ -1147,10 +1147,8 @@ inline StringRef thousands_sep(
 inline fmt::StringRef thousands_sep(...) { return ""; }
 
 // Makes an Arg object from any type.
-template <typename Formatter>
+template <typename Char>
 class MakeValue : public Arg {
- public:
-  typedef typename Formatter::Char Char;
 
  private:
   // The following two methods are private to disallow formatting of
@@ -1188,9 +1186,9 @@ class MakeValue : public Arg {
   // Formats an argument of a custom type, such as a user-defined class.
   template <typename T>
   static void format_custom_arg(
-      void *formatter, const void *arg, void *format_str_ptr) {
-    format(*static_cast<Formatter*>(formatter),
-           *static_cast<const Char**>(format_str_ptr),
+      void *w, const void *spec, const void *arg) {
+    do_format(*static_cast<BasicWriter<Char>*>(w),
+           *static_cast<const FormatSpec*>(spec),
            *static_cast<const T*>(arg));
   }
 
@@ -1303,7 +1301,7 @@ class MakeValue : public Arg {
   static uint64_t type(const NamedArg<Char_> &) { return Arg::NAMED_ARG; }
 };
 
-template <typename Formatter>
+template <typename Char>
 class MakeArg : public Arg {
 public:
   MakeArg() {
@@ -1312,8 +1310,8 @@ public:
   
   template <typename T>
   MakeArg(const T &value)
-  : Arg(MakeValue<Formatter>(value)) {
-    type = static_cast<Arg::Type>(MakeValue<Formatter>::type(value));
+  : Arg(MakeValue<Char>(value)) {
+    type = static_cast<Arg::Type>(MakeValue<Char>::type(value));
   }
 };
 
@@ -1323,7 +1321,7 @@ struct NamedArg : Arg {
 
   template <typename T>
   NamedArg(BasicStringRef<Char> argname, const T &value)
-  : Arg(MakeArg< BasicFormatter<Char> >(value)), name(argname) {}
+  : Arg(MakeArg<Char>(value)), name(argname) {}
 };
 
 class RuntimeError : public std::runtime_error {
@@ -2012,9 +2010,7 @@ class BasicArgFormatter : public internal::ArgFormatterBase<Impl, Char> {
 
   /** Formats argument of a custom (user-defined) type. */
   void visit_custom(internal::Arg::CustomValue c) {
-    const Char fmt[2] = {'}'};
-    const Char *s = fmt;
-    c.format(&formatter_, c.value, &s);
+    c.format(&formatter_.writer(), &this->spec(), c.value);
   }
 };
 
@@ -2128,8 +2124,8 @@ template <unsigned N>
 struct ArgArray<N, false/*IsPacked*/> {
   typedef Arg Type[N + 1]; // +1 for the list end Arg::NONE
 
-  template <typename Formatter, typename T>
-  static Arg make(const T &value) { return MakeArg<Formatter>(value); }
+  template <typename Char, typename T>
+  static Arg make(const T &value) { return MakeArg<Char>(value); }
 };
 
 #if FMT_USE_VARIADIC_TEMPLATES
@@ -2175,7 +2171,7 @@ inline uint64_t make_type(FMT_GEN15(FMT_ARG_TYPE_DEFAULT)) {
   void func(arg_type arg0, const Args & ... args) { \
     typedef fmt::internal::ArgArray<sizeof...(Args)> ArgArray; \
     typename ArgArray::Type array{ \
-      ArgArray::template make<fmt::BasicFormatter<Char> >(args)...}; \
+      ArgArray::template make<Char>(args)...}; \
     func(arg0, fmt::ArgList(fmt::internal::make_type(args...), array)); \
   }
 
@@ -2185,7 +2181,7 @@ inline uint64_t make_type(FMT_GEN15(FMT_ARG_TYPE_DEFAULT)) {
   ctor(arg0_type arg0, arg1_type arg1, const Args & ... args) { \
     typedef fmt::internal::ArgArray<sizeof...(Args)> ArgArray; \
     typename ArgArray::Type array{ \
-      ArgArray::template make<fmt::BasicFormatter<Char> >(args)...}; \
+      ArgArray::template make<Char>(args)...}; \
     func(arg0, arg1, fmt::ArgList(fmt::internal::make_type(args...), array)); \
   }
 
@@ -2402,18 +2398,6 @@ class BasicWriter {
   CharPtr prepare_int_buffer(unsigned num_digits,
     const Spec &spec, const char *prefix, unsigned prefix_size);
 
-  // Formats an integer.
-  template <typename T, typename Spec>
-  void write_int(T value, Spec spec);
-
-  // Formats a floating-point number (double or long double).
-  template <typename T>
-  void write_double(T value, const FormatSpec &spec);
-
-  // Writes a formatted string.
-  template <typename StrChar>
-  CharPtr write_str(const StrChar *s, std::size_t size, const AlignSpec &spec);
-
   template <typename StrChar>
   void write_str(const internal::Arg::StringValue<StrChar> &str,
                  const FormatSpec &spec);
@@ -2514,6 +2498,18 @@ class BasicWriter {
     BasicFormatter<Char>(args, *this).format(format);
   }
   FMT_VARIADIC_VOID(write, BasicCStringRef<Char>)
+
+  // Formats an integer.
+  template <typename T, typename Spec>
+  void write_int(T value, Spec spec);
+
+  // Formats a floating-point number (double or long double).
+  template <typename T>
+  void write_double(T value, const FormatSpec &spec);
+
+  // Writes a formatted string.
+  template <typename StrChar>
+  CharPtr write_str(const StrChar *s, std::size_t size, const AlignSpec &spec);
 
   BasicWriter &operator<<(int value) {
     write_decimal(value);
@@ -3422,7 +3418,7 @@ void arg(WStringRef, const internal::NamedArg<Char>&) FMT_DELETED_OR_UNDEFINED;
       const Args & ... args) { \
     typedef fmt::internal::ArgArray<sizeof...(Args)> ArgArray; \
     typename ArgArray::Type array{ \
-      ArgArray::template make<fmt::BasicFormatter<Char> >(args)...}; \
+      ArgArray::template make<Char>(args)...}; \
     call(FMT_FOR_EACH(FMT_GET_ARG_NAME, __VA_ARGS__), \
       fmt::ArgList(fmt::internal::make_type(args...), array)); \
   }
@@ -3841,6 +3837,7 @@ struct BasicFormat {
         start = s = on_arg(s, arg);
         _merge_delim = false;
       }
+      on_text(start, s);
     }
 
     Arg parse_arg_index(const Char *&s) {
@@ -3919,14 +3916,13 @@ struct BasicFormat {
       return args[unsigned(i)];
     };
 
-    bool stop = false;
     for (;;) {
       if (di != de) {
         auto t0 = ti;
         ti = tb + *di;
         visit(t0, ti);
         ++di;
-      } else if (!(stop ^= true))
+      } else
         return;
       if (si != se) {
         FormatSpec spec(*si);
@@ -3937,8 +3933,7 @@ struct BasicFormat {
           internal::set_precision(spec, lookup(*ai++));
         visit(spec, arg);
         ++si;
-      } else if (!(stop ^= true))
-        return;
+      }
     }
   }
 
@@ -3948,6 +3943,53 @@ struct BasicFormat {
   std::vector<Arg> _args;
   bool _has_names;
 };
+
+template <typename Char>
+class SimpleArgFormatter
+    : public internal::ArgFormatterBase<SimpleArgFormatter<Char>, Char> {
+
+public:
+  /**
+  \rst
+  Constructs an argument formatter object.
+  *formatter* is a reference to the main formatter object, *spec* contains
+  format specifier information for standard argument types, and *fmt* points
+  to the part of the format string being parsed for custom argument types.
+  \endrst
+  */
+  SimpleArgFormatter(BasicWriter<Char> &w, FormatSpec &spec)
+      : internal::ArgFormatterBase<SimpleArgFormatter<Char>, Char>(w, spec) {}
+
+  /** Formats argument of a custom (user-defined) type. */
+  void visit_custom(internal::Arg::CustomValue c) {
+    c.format(&this->writer(), &this->spec(), c.value);
+  }
+};
+
+template <typename Char>
+struct BasicFormatVisitor {
+  BasicWriter<Char> &writer;
+
+  void operator()(const Char *b, const Char *e) const {
+    if (b != e)
+      writer << BasicStringRef<Char>(b, internal::to_unsigned(e - b));
+  }
+
+  void operator()(FormatSpec &spec, const internal::Arg &arg) const {
+    SimpleArgFormatter<Char>(writer, spec).visit(arg);
+  }
+};
+
+//void xxx(const BasicFormat<char>& f, ArgList args)
+//{
+//    BasicMemoryWriter<char> writer;
+//    BasicFormatVisitor<char> op = {writer};
+//    f.apply(op, args);
+//    std::cout.write(writer.data(), writer.size());
+//}
+//
+//FMT_VARIADIC(void, xxx, const BasicFormat<char>&)
+
 }  // namespace fmt
 
 #if FMT_USE_USER_DEFINED_LITERALS
