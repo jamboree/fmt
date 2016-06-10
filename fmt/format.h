@@ -3565,13 +3565,13 @@ inline void require_numeric_argument(const Arg &arg, char spec) {
 
 template <typename Char>
 void check_sign(const Char *&s, const Arg &arg) {
-  if (arg.type == internal::Arg::CUSTOM)
-    return;
-  char sign = static_cast<char>(*s);
-  require_numeric_argument(arg, sign);
-  if (arg.type == Arg::UINT || arg.type == Arg::ULONG_LONG) {
-    FMT_THROW(FormatError(fmt::format(
-      "format specifier '{}' requires signed argument", sign)));
+  if (arg.type != internal::Arg::CUSTOM) {
+    char sign = static_cast<char>(*s);
+    require_numeric_argument(arg, sign);
+    if (arg.type == Arg::UINT || arg.type == Arg::ULONG_LONG) {
+      FMT_THROW(FormatError(
+          fmt::format("format specifier '{}' requires signed argument", sign)));
+    }
   }
   ++s;
 }
@@ -3594,7 +3594,8 @@ FMT_API void set_precision(FormatSpec &spec, const Arg &precision_arg);
 //--------
 inline void require_numeric_argument(const ArgId &, char) {}
 
-inline void check_sign(const void *, const ArgId &) {}
+template <typename Char>
+inline void check_sign(const Char *&s, const ArgId &) { ++s; }
 
 inline void check_precision_target(const ArgId &) {}
 
